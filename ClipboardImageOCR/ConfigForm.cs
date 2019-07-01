@@ -39,6 +39,14 @@ namespace ClipboardImageOCR
 
             HotKey = _modifiedConfiguration.HotKey;
             textBox4.Text = getKeyEventArgsString(_modifiedConfiguration.HotKey);
+
+            radioButtonEnter.Checked = _modifiedConfiguration.autoAddEnter;
+            radioButtonTab.Checked = _modifiedConfiguration.autoAddTab;
+            if (_modifiedConfiguration.autoAddEnter==false  && _modifiedConfiguration.autoAddTab == false)
+            {
+                radioButtonN.Checked = true;
+            }
+
         }
 
 
@@ -75,6 +83,8 @@ namespace ClipboardImageOCR
 
             _modifiedConfiguration.HotKey = HotKey;
 
+            _modifiedConfiguration.autoAddEnter = radioButtonEnter.Checked;
+            _modifiedConfiguration.autoAddTab = radioButtonTab.Checked;
 
             _clipboardImageOCR.SaveServersConfig(_modifiedConfiguration);
             

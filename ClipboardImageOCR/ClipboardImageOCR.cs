@@ -589,13 +589,23 @@ namespace ClipboardImageOCR
         }
 
         /// <summary>
-        /// 发送字符串,  注意:\r\n 或\n 字符替换成了:按键Shifg+Enter
+        /// 发送字符串
         /// </summary>
         /// <param name="message">要发送的文本信息</param>
         private void send_api_txt(string message)
         {
             var sim = new InputSimulator();
             sim.Keyboard.TextEntry(message);
+
+            //判断是否需要追加回车或者制表符
+            if (_config.autoAddEnter)
+            {
+                sim.Keyboard.KeyPress(VirtualKeyCode.RETURN);
+            }
+            else if (_config.autoAddTab)
+            {
+                sim.Keyboard.KeyPress(VirtualKeyCode.TAB);
+            }
 
         }
         private string getKeyEventArgsString(KeyEventArgs e)
@@ -755,6 +765,11 @@ namespace ClipboardImageOCR
     {
         private static string CONFIG_FILE = "gui-config.json";
 
+        //自动在结尾处追加Enter
+        public bool autoAddEnter;
+        //自动在结尾处追加Tab
+        public bool autoAddTab;
+
         public bool autoBan;
 
         public bool inputmode; //True: 焦点录入  False: 放入剪切板
@@ -788,6 +803,9 @@ namespace ClipboardImageOCR
             Min_image_Width = 10;
             Max_image_Height = 4096;
             Min_image_Height = 10;
+
+            autoAddEnter = false;
+            autoAddTab = false;
 
             //HotKey = new KeyEventArgs(Keys.Shift | Keys.V);
         }
@@ -860,6 +878,9 @@ namespace ClipboardImageOCR
             Min_image_Height = config.Min_image_Height;
 
             HotKey = config.HotKey;
+
+            autoAddEnter = config.autoAddEnter;
+            autoAddTab = config.autoAddTab;
         }
 
         public void FixConfiguration()
