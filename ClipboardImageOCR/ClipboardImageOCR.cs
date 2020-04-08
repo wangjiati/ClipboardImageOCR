@@ -661,6 +661,7 @@ namespace ClipboardImageOCR
             HotKey.UnregisterHotKey(Handle, 100);
 
             ConfigForm configForm = new ConfigForm(this);
+            configForm.TopMost = true;
             configForm.Show();
         }
 
