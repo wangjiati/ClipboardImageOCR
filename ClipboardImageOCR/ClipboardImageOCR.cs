@@ -16,15 +16,22 @@ using System.Threading;
 
 using WindowsInput.Native;
 using WindowsInput;
-
-
-
+using System.Drawing.Imaging;
 
 namespace ClipboardImageOCR
 {
     public partial class ClipboardImageOCR : Form
     {
         private Configuration _config;
+
+        public static DataTable ClipboardData = new DataTable("ClipboardData"); //新建一个存储监听剪切板数据的表格.;
+        public DataView ClipboardDataView;
+
+        bool InitializationComponentCompleted = false;
+
+        public static System.Windows.Forms.Timer ShiftVTimer = new System.Windows.Forms.Timer();
+        public static int ShiftVCount = 0;
+        public static int ShiftVTimerCount = 0;
 
         #region Definitions
         //Constants for API Calls...
@@ -106,17 +113,57 @@ namespace ClipboardImageOCR
                 case WM_HOTKEY:
                     switch (m.WParam.ToInt32())
                     {
-                        case 100:    //按下的是Shift+V
-                                     //此处填写快捷键响应代码 
-                            if (_config.inputmode)
+                        case 100:    //按下的是Shift+V 此处填写快捷键响应代码 
+                            string send_txt = "";
+
+                            if (ShiftVTimer.Enabled == true)
                             {
-                                send_api_txt(richTextBox1.Text);
+                                if (ShiftVCount >= ClipboardData.Rows.Count)
+                                {
+                                    ShiftVCount = 0;
+                                }
+
+                                if (ClipboardData.Rows.Count > 1)
+                                {
+                                    send_txt = ClipboardData.Rows[ClipboardData.Rows.Count - 1 - ShiftVCount][0].ToString();
+                                }
+                                else
+                                {
+                                    send_txt = richTextBox1.Text;
+                                }
                             }
                             else
                             {
-                                Clipboard.SetDataObject(richTextBox1.Text, true);
+                                ShiftVCount = 0;
+                                
+                                if (ClipboardData.Rows.Count>1)
+                                {
+                                    send_txt = ClipboardData.Rows[ClipboardData.Rows.Count - 1 - ShiftVCount][0].ToString();
+                                }
+                                else
+                                {
+                                    send_txt = richTextBox1.Text;
+                                }
                             }
-                            
+
+                            if (!string.IsNullOrEmpty(send_txt))
+                            {
+                                if (_config.inputmode)
+                                {
+                                    send_api_txt(send_txt);
+                                }
+                                else
+                                {
+                                    Clipboard.SetDataObject(send_txt, true);
+                                }
+                            }
+                            ShiftVCount++;
+                            label6.Text = ShiftVCount.ToString();
+
+                            ShiftVTimerCount = 0;
+                            label7.Text = "30";
+                            ShiftVTimer.Start();
+
                             break;
 
                     }
@@ -126,12 +173,23 @@ namespace ClipboardImageOCR
         }
         #endregion
 
-        delegate void AsynUpdateUI(String step);
+        delegate void AsynUpdateUI(string OCRString, string consumingT, string StartTime);
 
         public ClipboardImageOCR()
         {
             _config = Configuration.Load();
             _config.FixConfiguration();
+
+            ClipboardData.Columns.Add("内容");
+            ClipboardData.Columns.Add("时间");
+            ClipboardData.Columns.Add("类型");
+            ClipboardData.Columns.Add("OCR耗时");
+            ClipboardData.Columns.Add("图片", Type.GetType("System.Byte[]"));
+
+            ClipboardData.Rows.Clear();
+
+            ClipboardDataView = ClipboardData.DefaultView; //创建默认视图
+
             InitializeComponent();
             NewViewer();
             radioButton_Precision_False.Checked = !_config.Baidu_ocr_Precision;
@@ -144,104 +202,39 @@ namespace ClipboardImageOCR
             {
                 button1.Text = "放入剪切板 " + getKeyEventArgsString(_config.HotKey);
             }
-            
 
+            label5.Text = "当快速连续按"+ getKeyEventArgsString(_config.HotKey) + "时" + "\r\n" + "按后进先出逐个提取监听记录";
+
+
+            dataGridViewClipboardDataView.AllowUserToAddRows = false;
+
+            dataGridViewClipboardDataView.DataSource = ClipboardDataView;
+            InitializationComponentCompleted = true;
+
+            ShiftVTimer.Interval = 100;
+            ShiftVTimer.Tick += new EventHandler(TimerEventProcessor);
+            label6.Text = "";
+            label7.Text = "";
+            this.TopMost = true;
         }
 
 
-        /// <summary>
-        /// 处理剪切板数据
-        /// </summary>
-        private void DisplayClipboardData()
-        {
-            try
-            {
-                if (checkBox1.Checked == false)
-                    return;
-
-                //显示剪贴板中的图片信息
-                if (Clipboard.ContainsImage())
-                   // if (iData.GetDataPresent(DataFormats.Bitmap))
-                {
-                    Image image = Clipboard.GetImage();
-
-                    if (image.Height < 15)
-                    {
-                        int newHeight = 15;
-                        double magnification = (double)newHeight / (double)image.Height;
-                        int newWidth = (int)(image.Width * magnification);
-                        Bitmap bitmap = new Bitmap(image,  newWidth, newHeight);
-                        image = bitmap;
-                    }
-                    if (image.Width < 15)
-                    {
-                        int newWidth = 15;
-                        double magnification = (double)newWidth / (double)image.Width;
-                        int newHeight = (int)(image.Height * magnification);
-                        Bitmap bitmap = new Bitmap(image, newWidth, newHeight);
-                        image = bitmap;
-                    }
-
-                    pictureBox1.Image = image;
-
-                    pictureBox1.Update();
-                    DateTime currentTime = DateTime.Now;
-
-                    if (pictureBox1.Image.Height > _config.Max_image_Height || pictureBox1.Image.Height < _config.Min_image_Height ||
-                        pictureBox1.Image.Width > _config.Max_image_Width || pictureBox1.Image.Width < _config.Min_image_Width
-                        )
-                    {
-                        label3.Text = @"超设置尺寸,本次不识别. W:" + pictureBox1.Image.Width.ToString() + @" H" + pictureBox1.Image.Height.ToString();
-                        return;
-                    }
-                    else
-                    {
-                        label3.Text = @"";
-                    }
-
-                    label1.Text = currentTime.ToString("HH:mm:ss") + @" 从剪切板提取:";
-
-                    Baidu_ocr baidu_Ocr = new Baidu_ocr(pictureBox1.Image, radioButton_Precision_True.Checked);
-
-                    baidu_Ocr.API_KEY = _config.Baidu_ocr_API_KEY;
-                    baidu_Ocr.APP_ID = _config.Baidu_ocr_APP_ID;
-                    baidu_Ocr.SECRET_KEY = _config.Baidu_ocr_SECRET_KEY;
-
-                    baidu_Ocr.UpdateUIDelegate += UpdataUIStatus;//绑定更新任务状态的委托
-
-
-                    //baidu_Ocr.OCR(pictureBox1.Image, radioButton2.Checked);
-
-                    Thread OCR_thread = new Thread(baidu_Ocr.ThreadOCR)
-                    {
-                        IsBackground = true
-                    };
-
-                    OCR_thread.Start();
-
-                }
-            }
-            catch (Exception e)
-            {
-                //MessageBox.Show(e.ToString());
-                Logging.LogUsefulException(e);
-            }
-        }
+        
         /// <summary>
         /// 更新UI
         /// </summary>
         /// <param name="step"></param>
         /// 
 
-        private void UpdataUIStatus(String OCRString)
+        private void UpdataUIStatus(string OCRString,string consumingT, string StartTime)
         {
             if (InvokeRequired)
             {
-                this.Invoke(new AsynUpdateUI(delegate (String s)
+                this.Invoke(new AsynUpdateUI(delegate (string s, string cT, string ST)
                 {
                     if (s != "")
                     {
-                        this.richTextBox1.Text = s;
+                        richTextBox1.Text = s;
                         DateTime currentTime = DateTime.Now;
                         this.label2.Text = currentTime.ToString("HH:mm:ss") + @"完成OCR识别:";
                         string temp = s.Length >= 20 ? s.Substring(0, 20) + "..." : s;
@@ -251,6 +244,16 @@ namespace ClipboardImageOCR
                         notifyIcon1.BalloonTipTitle = currentTime.ToString("HH:mm:ss") + "完成OCR识别";
                         notifyIcon1.BalloonTipText =  @"OCR结果:" + "\r\n" + temp + "\r\n" ;
                         notifyIcon1.ShowBalloonTip(1000);//消失时间
+
+                        foreach (DataRow item in ClipboardData.Rows)
+                        {
+                            if (item["时间"].ToString() == ST)
+                            {
+                                item["内容"] = OCRString;
+                                item["OCR耗时"] = cT;
+
+                            }
+                        }
                     }
                     else
                     {
@@ -259,7 +262,7 @@ namespace ClipboardImageOCR
                         notifyIcon1.BalloonTipText = " ";
                         notifyIcon1.ShowBalloonTip(1000);//消失时间
                     }
-                }), OCRString);
+                }), OCRString, consumingT, StartTime);
             }
             else
             {
@@ -274,6 +277,16 @@ namespace ClipboardImageOCR
                     notifyIcon1.BalloonTipTitle = currentTime.ToString("HH:mm:ss") + "完成OCR识别";
                     notifyIcon1.BalloonTipText =  @"OCR结果:" + "\r\n" + temp + "\r\n";
                     notifyIcon1.ShowBalloonTip(1000);//消失时间
+
+                    foreach (DataRow item in ClipboardData.Rows)
+                    {
+                        if (item["时间"].ToString() == StartTime)
+                        {
+                            item["内容"] = OCRString;
+                            item["OCR耗时"] = consumingT;
+
+                        } 
+                    }
                 }
                 else
                 {
@@ -286,6 +299,24 @@ namespace ClipboardImageOCR
             }
         }
 
+        private  void TimerEventProcessor(Object myObject,EventArgs myEventArgs)
+        {
+            if (++ShiftVTimerCount > 30)
+            {
+                ShiftVTimer.Stop();
+
+                ShiftVCount = 0;
+                ShiftVTimerCount = 0;
+                label6.Text = "";
+                label7.Text = "";
+            }
+            else
+            {
+                label7.Text = (30 - ShiftVTimerCount).ToString();
+            }
+           
+        }
+
         private void ClipboardImageOCR_DragEnter(object sender, DragEventArgs e)
         {
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
@@ -293,7 +324,56 @@ namespace ClipboardImageOCR
                 e.Effect = DragDropEffects.Move;
             }
         }
+        /// <summary>
+        /// 处理剪切板数据
+        /// </summary>
+        private void DisplayClipboardData()
+        {
+            if (InitializationComponentCompleted == false)
+            {
+                return;
+            }
+            try
+            {
+                //显示剪贴板中的图片信息
+                if (Clipboard.ContainsImage())
+                // if (iData.GetDataPresent(DataFormats.Bitmap))
+                {
+                    if (checkBox1.Checked == false)
+                        return;
+                    Image image = Clipboard.GetImage();
 
+                    pictureBox1.Image = image;
+                    pictureBox1.Update();
+
+                    DateTime currentTime = DateTime.Now;
+                    label1.Text = currentTime.ToString("HH:mm:ss") + @" 从剪切板提取:";
+                    OCRthread(image, currentTime);
+
+                }
+                else if (Clipboard.ContainsText())
+                {
+                    string cliStr = Clipboard.GetText();
+                    if (string.IsNullOrEmpty(cliStr))
+                    {
+                        return;
+                    }
+
+                    while (ClipboardData.Rows.Count > 20)
+                    {
+                        ClipboardData.Rows[0].Delete();
+                    }
+                    DateTime currentTime = DateTime.Now;
+                    ClipboardData.Rows.Add(cliStr, currentTime.ToString("HH:mm:ss:fff"), "文字", "", null);
+
+                }
+            }
+            catch (Exception e)
+            {
+                //MessageBox.Show(e.ToString());
+                Logging.LogUsefulException(e);
+            }
+        }
         private void ClipboardImageOCR_DragDrop(object sender, DragEventArgs e)
         {
             string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
@@ -315,59 +395,14 @@ namespace ClipboardImageOCR
 
                         Image image = Image.FromFile(files[0]);
 
-                        if (image.Height < 15)
-                        {
-                            int newHeight = 15;
-                            double magnification = (double)newHeight / (double)image.Height;
-                            int newWidth = (int)(image.Width * magnification);
-                            Bitmap bitmap = new Bitmap(image, newWidth, newHeight);
-                            image = bitmap;
-                        }
-                        if (image.Width < 15)
-                        {
-                            int newWidth = 15;
-                            double magnification = (double)newWidth / (double)image.Width;
-                            int newHeight = (int)(image.Height * magnification);
-                            Bitmap bitmap = new Bitmap(image, newWidth, newHeight);
-                            image = bitmap;
-                        }
-
                         pictureBox1.Image = image;
+                        pictureBox1.Update();
+
                         DateTime currentTime = DateTime.Now;
                         label1.Text = currentTime.ToString("HH:mm:ss") + @" 拖拽图片:";
 
-                        if (pictureBox1.Image.Height > _config.Max_image_Height || pictureBox1.Image.Height < _config.Min_image_Height ||
-                            pictureBox1.Image.Width > _config.Max_image_Width || pictureBox1.Image.Width < _config.Min_image_Width
-                            )
-                        {
-                            label3.Text = @"超设置尺寸,本次不识别. W:" + pictureBox1.Image.Width.ToString() + @" H" + pictureBox1.Image.Height.ToString();
-                            return;
-                        }
-                        else
-                        {
-                            label3.Text = @"";
-                        }
-
-
-
-                        Baidu_ocr baidu_Ocr = new Baidu_ocr(pictureBox1.Image, radioButton_Precision_True.Checked);
-
-                        baidu_Ocr.API_KEY = _config.Baidu_ocr_API_KEY;
-                        baidu_Ocr.APP_ID = _config.Baidu_ocr_APP_ID;
-                        baidu_Ocr.SECRET_KEY = _config.Baidu_ocr_SECRET_KEY;
-
-                        baidu_Ocr.UpdateUIDelegate  += UpdataUIStatus;//绑定更新任务状态的委托
-
-
-                        //baidu_Ocr.OCR(pictureBox1.Image, radioButton2.Checked);
-
-                        Thread OCR_thread = new Thread(baidu_Ocr.ThreadOCR)
-                        {
-                            IsBackground = true
-                        };
-
-                        OCR_thread.Start();
-
+                        OCRthread(image, currentTime);
+                       
                     }
                     catch (Exception e1)
                     {
@@ -377,11 +412,123 @@ namespace ClipboardImageOCR
                 }
             }
         }
+        private void button2_Click(object sender, EventArgs e)
+        {
+            Image image = pictureBox1.Image;
 
+            if (image == null)
+            {
+                MessageBox.Show("没有需要OCR识别的图片");
+                return;
+            }
+            
+
+            DateTime currentTime = DateTime.Now;
+            label1.Text = currentTime.ToString("HH:mm:ss") + "再次识别的图片:";
+            OCRthread(image, currentTime);
+        }
+        private void pictureBox1_DoubleClick(object sender, EventArgs e)
+        {
+            OpenFileDialog openFile = new OpenFileDialog();
+            openFile.DefaultExt = "*.jpg;*.jpeg;";
+
+            openFile.Filter = "Image files (JPeg, Gif, Bmp, etc.)|*.jpg;*.jpeg;*.gif;*.bmp;*.tif; *.tiff; *.png|" +
+                " JPeg files (*.jpg;*.jpeg)|*.jpg;*.jpeg |GIF files (*.gif)|*.gif |BMP files (*.b" +
+                "mp)|*.bmp|Tiff files (*.tif;*.tiff)|*.tif;*.tiff|Png files (*.png)| *.png |All f" +
+                "iles (*.*)|*.*";
+
+            if (openFile.ShowDialog() == DialogResult.OK)
+            {
+                try
+                {
+
+                    Image image = Image.FromFile(openFile.FileName);
+
+                    pictureBox1.Image = image;
+                    pictureBox1.Update();
+
+                    DateTime currentTime = DateTime.Now;
+                    label1.Text = currentTime.ToString("HH:mm:ss") + @" 手工打开图片:";
+                    OCRthread(image, currentTime);
+
+
+                }
+                catch (Exception e1)
+                {
+                    //MessageBox.Show(e1.ToString());
+                    Logging.LogUsefulException(e1);
+                }
+            }
+        }
+        private void OCRthread(Image imag, DateTime currentTime)
+        {
+            Image image = imag;
+            if (image == null)
+            {
+                return;
+            }
+            if (image.Height < 15)
+            {
+                int newHeight = 15;
+                double magnification = (double)newHeight / (double)image.Height;
+                int newWidth = (int)(image.Width * magnification);
+                Bitmap bitmap = new Bitmap(image, newWidth, newHeight);
+                image = bitmap;
+            }
+            if (image.Width < 15)
+            {
+                int newWidth = 15;
+                double magnification = (double)newWidth / (double)image.Width;
+                int newHeight = (int)(image.Height * magnification);
+                Bitmap bitmap = new Bitmap(image, newWidth, newHeight);
+                image = bitmap;
+            }
+
+
+
+            if (image.Height > _config.Max_image_Height || image.Height < _config.Min_image_Height ||
+                image.Width > _config.Max_image_Width || image.Width < _config.Min_image_Width
+                )
+            {
+                label3.Text = @"超设置尺寸,本次不识别. W:" + image.Width.ToString() + @" H" + image.Height.ToString();
+                return;
+            }
+            else
+            {
+                label3.Text = @"";
+            }
+
+            label1.Text = currentTime.ToString("HH:mm:ss") + @" 从剪切板提取:";
+
+            while (ClipboardData.Rows.Count > 20)
+            {
+                ClipboardData.Rows[0].Delete();
+            }
+            ClipboardData.Rows.Add("", currentTime.ToString("HH:mm:ss:fff"), "图片", "", ImageProcess.ImageToBytes(image));
+
+            Baidu_ocr baidu_Ocr = new Baidu_ocr(image, radioButton_Precision_True.Checked, currentTime);
+
+            baidu_Ocr.API_KEY = _config.Baidu_ocr_API_KEY;
+            baidu_Ocr.APP_ID = _config.Baidu_ocr_APP_ID;
+            baidu_Ocr.SECRET_KEY = _config.Baidu_ocr_SECRET_KEY;
+
+            baidu_Ocr.UpdateUIDelegate += UpdataUIStatus;//绑定更新任务状态的委托
+
+            //baidu_Ocr.OCR(pictureBox1.Image, radioButton2.Checked);
+
+            Thread OCR_thread = new Thread(baidu_Ocr.ThreadOCR);
+            OCR_thread.IsBackground = true;
+            OCR_thread.Start();
+
+        }
 
         private void button1_Click_1(object sender, EventArgs e)
         {
-            Clipboard.SetDataObject(richTextBox1.Text, true);
+            if (! string.IsNullOrEmpty(richTextBox1.Text))
+            {
+                Clipboard.SetDataObject(richTextBox1.Text, true);
+            }
+            
         }
 
 
@@ -403,6 +550,7 @@ namespace ClipboardImageOCR
             this.Show();
             this.WindowState = FormWindowState.Normal;
             this.Activate();
+            this.TopMost = true;
         }
 
 
@@ -442,79 +590,7 @@ namespace ClipboardImageOCR
             ShowMainForm();
         }
 
-        private void button2_Click(object sender, EventArgs e)
-        {
-            IDataObject iData = new DataObject();
-            iData = Clipboard.GetDataObject();
 
-            //显示剪贴板中的图片信息
-            if (iData.GetDataPresent(DataFormats.Bitmap))
-            {
-                Image image = Clipboard.GetImage();
-
-                if (image.Height < 15)
-                {
-                    int newHeight = 15;
-                    double magnification = (double)newHeight / (double)image.Height;
-                    int newWidth = (int)(image.Width * magnification);
-                    Bitmap bitmap = new Bitmap(image, newWidth, newHeight);
-                    image = bitmap;
-                }
-                if (image.Width < 15)
-                {
-                    int newWidth = 15;
-                    double magnification = (double)newWidth / (double)image.Width;
-                    int newHeight = (int)(image.Height * magnification);
-                    Bitmap bitmap = new Bitmap(image, newWidth, newHeight);
-                    image = bitmap;
-                }
-
-                pictureBox1.Image = image;
-                pictureBox1.Update();
-            }
-
-            if (pictureBox1.Image == null)
-            {
-                MessageBox.Show("没有需要OCR识别的图片");
-                return;
-            }
-
-            try
-            {
-                DateTime currentTime = DateTime.Now;
-                if (pictureBox1.Image.Height > _config.Max_image_Height || pictureBox1.Image.Height < _config.Min_image_Height ||
-                    pictureBox1.Image.Width > _config.Max_image_Width || pictureBox1.Image.Width < _config.Min_image_Width
-                    )
-                {
-                    label3.Text = @"超设置尺寸,本次不识别. W:" + pictureBox1.Image.Width.ToString() + @" H" + pictureBox1.Image.Height.ToString();
-                    return;
-                }
-                else
-                {
-                    label3.Text = @"";
-                }
-
-                label1.Text = currentTime.ToString("HH:mm:ss") + "再次识别的图片:";
-
-                Baidu_ocr baidu_Ocr = new Baidu_ocr(pictureBox1.Image, radioButton_Precision_True.Checked);
-                baidu_Ocr.API_KEY = _config.Baidu_ocr_API_KEY;
-                baidu_Ocr.APP_ID = _config.Baidu_ocr_APP_ID;
-                baidu_Ocr.SECRET_KEY = _config.Baidu_ocr_SECRET_KEY;
-                baidu_Ocr.UpdateUIDelegate += UpdataUIStatus;//绑定更新任务状态的委托
-
-                Thread OCR_thread = new Thread(baidu_Ocr.ThreadOCR)
-                {
-                    IsBackground = true
-                };
-
-                OCR_thread.Start();
-            }
-            catch (Exception e1)
-            {
-                //MessageBox.Show(e1.ToString());
-                Logging.LogUsefulException(e1);
-            }
-        }
 
 
         /// <summary>
@@ -669,7 +745,7 @@ namespace ClipboardImageOCR
             {
                 button1.Text = "放入剪切板 " + getKeyEventArgsString(_config.HotKey);
             }
-
+            label5.Text = "当快速连续按" + getKeyEventArgsString(_config.HotKey) + "时" + "\r\n" + "按后进先出逐个提取监听记录";
             Configuration.Save(config);
         }
         
@@ -678,83 +754,39 @@ namespace ClipboardImageOCR
             return _config;
         }
 
-
-        private void pictureBox1_DoubleClick(object sender, EventArgs e)
+        private void dataGridViewClipboardDataView_CellClick(object sender, DataGridViewCellEventArgs e)
         {
-            OpenFileDialog openFile = new OpenFileDialog();
-            openFile.DefaultExt = "*.jpg;*.jpeg;";
-
-            openFile.Filter = "Image files (JPeg, Gif, Bmp, etc.)|*.jpg;*.jpeg;*.gif;*.bmp;*.tif; *.tiff; *.png|" +
-                " JPeg files (*.jpg;*.jpeg)|*.jpg;*.jpeg |GIF files (*.gif)|*.gif |BMP files (*.b" +
-                "mp)|*.bmp|Tiff files (*.tif;*.tiff)|*.tif;*.tiff|Png files (*.png)| *.png |All f" +
-                "iles (*.*)|*.*";
-
-            if (openFile.ShowDialog() == DialogResult.OK)
+            if (e.ColumnIndex < 0 || e.RowIndex < 0 )
             {
-                try
-                {
+                return;
+            }
+            if (dataGridViewClipboardDataView.Rows[e.RowIndex].Cells[2].Value.ToString() == "图片")
+            {
+                Image image = ImageProcess.GetImageByBytes((byte[])dataGridViewClipboardDataView.Rows[e.RowIndex].Cells[4].Value);
+                pictureBox1.Image = image;
+            }
+            richTextBox1.Text = dataGridViewClipboardDataView.Rows[e.RowIndex].Cells[0].Value.ToString();
+        }
 
-                    Image image = Image.FromFile(openFile.FileName);
+        private void dataGridViewClipboardDataView_CellEnter(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.ColumnIndex < 0 || e.RowIndex < 0)
+            {
+                return;
+            }
+            if (dataGridViewClipboardDataView.Rows[e.RowIndex].Cells[2].Value.ToString() == "图片")
+            {
+                Image image = ImageProcess.GetImageByBytes((byte[])dataGridViewClipboardDataView.Rows[e.RowIndex].Cells[4].Value);
+                pictureBox1.Image = image;
+            }
+            richTextBox1.Text = dataGridViewClipboardDataView.Rows[e.RowIndex].Cells[0].Value.ToString();
+        }
 
-                    if (image.Height < 15)
-                    {
-                        int newHeight = 15;
-                        double magnification = (double)newHeight / (double)image.Height;
-                        int newWidth = (int)(image.Width * magnification);
-                        Bitmap bitmap = new Bitmap(image, newWidth, newHeight);
-                        image = bitmap;
-                    }
-                    if (image.Width < 15)
-                    {
-                        int newWidth = 15;
-                        double magnification = (double)newWidth / (double)image.Width;
-                        int newHeight = (int)(image.Height * magnification);
-                        Bitmap bitmap = new Bitmap(image, newWidth, newHeight);
-                        image = bitmap;
-                    }
-
-                    pictureBox1.Image = image;
-                    DateTime currentTime = DateTime.Now;
-                    label1.Text = currentTime.ToString("HH:mm:ss") + @" 手工打开图片:";
-
-                    if (pictureBox1.Image.Height > _config.Max_image_Height || pictureBox1.Image.Height < _config.Min_image_Height ||
-                        pictureBox1.Image.Width > _config.Max_image_Width || pictureBox1.Image.Width < _config.Min_image_Width
-                        )
-                    {
-                        label3.Text = @"超设置尺寸,本次不识别. W:" + pictureBox1.Image.Width.ToString() + @" H" + pictureBox1.Image.Height.ToString();
-                        return;
-                    }
-                    else
-                    {
-                        label3.Text = @"";
-                    }
-
-
-
-                    Baidu_ocr baidu_Ocr = new Baidu_ocr(pictureBox1.Image, radioButton_Precision_True.Checked);
-
-                    baidu_Ocr.API_KEY = _config.Baidu_ocr_API_KEY;
-                    baidu_Ocr.APP_ID = _config.Baidu_ocr_APP_ID;
-                    baidu_Ocr.SECRET_KEY = _config.Baidu_ocr_SECRET_KEY;
-
-                    baidu_Ocr.UpdateUIDelegate += UpdataUIStatus;//绑定更新任务状态的委托
-
-
-                    //baidu_Ocr.OCR(pictureBox1.Image, radioButton2.Checked);
-
-                    Thread OCR_thread = new Thread(baidu_Ocr.ThreadOCR)
-                    {
-                        IsBackground = true
-                    };
-
-                    OCR_thread.Start();
-
-                }
-                catch (Exception e1)
-                {
-                    //MessageBox.Show(e1.ToString());
-                    Logging.LogUsefulException(e1);
-                }
+        private void button3_Click(object sender, EventArgs e)
+        {
+            if (MessageBox.Show("是否要删除全部记录?","删除提示",MessageBoxButtons.YesNo) == DialogResult.Yes)
+            {
+                ClipboardData.Clear();
             }
         }
     }
@@ -933,17 +965,19 @@ namespace ClipboardImageOCR
         private bool accurate;
         private Image Image;
 
-        public delegate void UpdateUI(string OCRString);//声明一个更新主线程的委托
+        public delegate void UpdateUI(string OCRString,string consumingT, string StartTime);//声明一个更新主线程的委托
         public UpdateUI UpdateUIDelegate;
 
+        public delegate void AccomplishTask();//声明一个在完成任务时通知主线程的委托
+        public AccomplishTask TaskCallBack;
 
+        private DateTime StartTime;
 
-        public Baidu_ocr(Image Image, bool accurate)
+        public Baidu_ocr(Image Image, bool accurate, DateTime StartTime)
         {
             this.Image = Image;
-
-
             this.accurate = accurate;
+            this.StartTime = StartTime;
         }
 
         public void ThreadOCR()
@@ -951,13 +985,36 @@ namespace ClipboardImageOCR
             try
             {
                 string temp = OCR_AccurateBasic(Image, accurate);
-                UpdateUIDelegate(temp);
+                DateTime EdnTime = DateTime.Now;
+                string consumingT = ExecDateDiff(StartTime, EdnTime);
+
+                //调用更新主线程ui状态的委托
+                UpdateUIDelegate(temp, consumingT, StartTime.ToString("HH:mm:ss:fff"));
+               
+
+                //任务完成时通知主线程作出相应的处理
+                //TaskCallBack();
             }
             catch (Exception e1)
             {
                 //MessageBox.Show(e1.ToString());
                 Logging.LogUsefulException(e1);
             }
+        }
+
+        /// <summary>
+        /// 程序执行时间测试
+        /// </summary>
+        /// <param name="dateBegin">开始时间</param>
+        /// <param name="dateEnd">结束时间</param>
+        /// <returns>返回(秒)单位，比如: 0.00239秒</returns>
+        public static string ExecDateDiff(DateTime dateBegin, DateTime dateEnd)
+        {
+            TimeSpan ts1 = new TimeSpan(dateBegin.Ticks);
+            TimeSpan ts2 = new TimeSpan(dateEnd.Ticks);
+            TimeSpan ts3 = ts1.Subtract(ts2).Duration();
+            //你想转的格式
+            return ts3.TotalMilliseconds.ToString();
         }
 
         private string OCR_AccurateBasic(Image image, bool GeneralOrAccurate)
@@ -968,7 +1025,7 @@ namespace ClipboardImageOCR
 
             var client = new Baidu.Aip.Ocr.Ocr(API_KEY, SECRET_KEY);
             client.Timeout = 60000;  // 修改超时时间
-            var imageByte = BmpConvertByte(image);
+            var imageByte = ImageProcess.ImageToBytes(image);
 
             /*
             // 如果有可选参数
@@ -1011,29 +1068,6 @@ namespace ClipboardImageOCR
                 return "";
             }
         }
-
-        /// <summary>
-        /// 图片转字节流
-        /// </summary>
-        /// <param name="image"></param>
-        /// <returns></returns>
-        private Byte[] BmpConvertByte(Image image)
-        {
-            MemoryStream ms1 = new MemoryStream();
-            image.Save(ms1, System.Drawing.Imaging.ImageFormat.Bmp);
-            return ms1.GetBuffer();
-        }
-        /// <summary>
-        /// 字节流转图片
-        /// </summary>
-        /// <param name="streamByte"></param>
-        /// <returns></returns>
-        public System.Drawing.Image ReturnPhoto(byte[] streamByte)
-        {
-            System.IO.MemoryStream ms = new System.IO.MemoryStream(streamByte);
-            System.Drawing.Image img = System.Drawing.Image.FromStream(ms);
-            return img;
-        }
     }
 
     public class HotKey
@@ -1073,4 +1107,237 @@ namespace ClipboardImageOCR
         }
     }
 
+
+    public class ImageProcess
+    {
+        /// <summary>
+        ///     图片转为base64编码字符
+        /// </summary>
+        /// <param name="path">图片路径</param>
+        /// <param name="format">图片格式</param>
+        /// <returns>base64编码字符</returns>
+        public static string ImgToBase64(string path, ImageFormat format)
+        {
+            try
+            {
+                var bmp = new Bitmap(path);
+                var ms = new MemoryStream();
+                bmp.Save(ms, format);
+                var arr = new byte[ms.Length];
+                ms.Position = 0;
+                ms.Read(arr, 0, (int)ms.Length);
+                ms.Close();
+                return Convert.ToBase64String(arr);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception(ex.Message);
+            }
+        }
+
+        /// <summary>
+        ///     图片转为base64编码字符
+        /// </summary>
+        /// <param name="bytes">图片二进制数据</param>
+        public static string ImgToBase64(byte[] bytes)
+        {
+            if (bytes == null)
+            {
+                return "";
+            }
+
+            try
+            {
+                return Convert.ToBase64String(bytes);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception(ex.Message);
+            }
+        }
+
+        /// <summary>
+        ///     图片转为base64编码字符
+        /// </summary>
+        /// <param name="img">Image图片</param>
+        /// <returns>base64字符串</returns>
+        public static string ImgToBase64(Image img)
+        {
+            try
+            {
+                var bts = BitmapToBytes(img);
+                return ImgToBase64(bts);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception(ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// 图片转字节流
+        /// </summary>
+        /// <param name="image"></param>
+        /// <returns></returns>
+        private Byte[] BmpConvertByte(Image image)
+        {
+            MemoryStream ms1 = new MemoryStream();
+            image.Save(ms1, System.Drawing.Imaging.ImageFormat.Bmp);
+            return ms1.GetBuffer();
+        }
+        /// <summary>
+        /// 字节流转图片
+        /// </summary>
+        /// <param name="streamByte"></param>
+        /// <returns></returns>
+        public System.Drawing.Image ReturnPhoto(byte[] streamByte)
+        {
+            System.IO.MemoryStream ms = new System.IO.MemoryStream(streamByte);
+            System.Drawing.Image img = System.Drawing.Image.FromStream(ms);
+            return img;
+        }
+
+        /// <summary>
+        ///     image转byte[]
+        /// </summary>
+        /// <param name="image">image</param>
+        /// <returns>byte[]</returns>
+        public static byte[] ImageToBytes(Image image)
+        {
+            try
+            {
+                using (Bitmap bitmap = new Bitmap(image))
+                {
+                    using (MemoryStream stream = new MemoryStream())
+                    {
+                        bitmap.Save(stream, ImageFormat.Jpeg);
+                        return stream.GetBuffer();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+
+                throw;
+            }
+            
+            //*/
+        }
+
+
+        /// <summary>
+        ///     base64编码的文本转为图片
+        /// </summary>
+        /// <param name="bstring">base64编码图片</param>
+        /// <returns>图片</returns>
+        public static Bitmap Base64ToImage(string bstring)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(bstring)) return null;
+                var arr = Convert.FromBase64String(bstring);
+                var ms = new MemoryStream(arr);
+                var bmp = new Bitmap(Image.FromStream(ms));
+                ms.Close();
+                return bmp;
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 图片转byte[]
+        /// </summary>
+        /// <param name="image"></param>
+        /// <returns></returns>
+        public static byte[] BitmapToBytes(Image image)
+        {
+
+            MemoryStream ms = new MemoryStream();
+            image.Save(ms, System.Drawing.Imaging.ImageFormat.Bmp);
+            byte[] bytes = ms.GetBuffer();  //byte[]   bytes=   ms.ToArray(); 这两句都可以，至于区别么，下面有解释
+            ms.Close();
+            return bytes;
+        }
+
+
+        /// <summary>
+        ///读取byte[]并转化为图片
+        /// </summary>
+        /// <param name="bytes">byte[]</param>
+        /// <returns>Image</returns>
+        public static Image GetImageByBytes(byte[] bytes)
+        {
+            Image photo = null;
+            using (var ms = new MemoryStream(bytes))
+            {
+                ms.Write(bytes, 0, bytes.Length);
+                photo = Image.FromStream(ms, true);
+            }
+            return photo;
+        }
+
+
+        /// 图片url链接转化为图片
+        /// </summary>
+        /// <param name="url"></param>
+        /// <returns></returns>
+        public static Bitmap GetURLImage(string url)
+        {
+            if (string.IsNullOrEmpty(url))
+            {
+                return null;
+            }
+
+            try
+            {
+                System.Net.WebRequest webreq = System.Net.WebRequest.Create(url);
+                System.Net.WebResponse webres = webreq.GetResponse();
+                using (System.IO.Stream stream = webres.GetResponseStream())
+                {
+                    Bitmap tmpImg = new Bitmap(stream);
+                    var img = new Bitmap(tmpImg);
+                    stream.Close();
+                    return img;
+                }
+            }
+            catch (Exception ex)
+            {
+                //LogHelper.WriteErrorLog(typeof(ImageHelper), ex);
+                return null;
+            }
+
+        }
+        /// <summary>
+        /// 图片url链接转化为字节
+        /// </summary>
+        /// <param name="url"></param>
+        /// <returns></returns>
+        public static byte[] GetURLImageBytes(string url)
+        {
+            byte[] img = null;
+            try
+            {
+                System.Net.WebRequest webreq = System.Net.WebRequest.Create(url);
+                System.Net.WebResponse webres = webreq.GetResponse();
+                using (System.IO.Stream stream = webres.GetResponseStream())
+                {
+                    using (System.IO.MemoryStream mStream = new MemoryStream())
+                    {
+                        stream.CopyTo(mStream);
+                        img = mStream.GetBuffer();
+                        stream.Close();
+                        mStream.Close();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                //LogHelper.WriteErrorLog(typeof(ImageHelper), ex);
+            }
+            return img;
+        }
+    }
 }

@@ -191,7 +191,7 @@ namespace ClipboardImageOCR
 
         private string GetTimestamp()
         {
-            return "[" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "] ";
+            return "[" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss:fff") + "] ";
         }
 
         public override void WriteLine(string value)
